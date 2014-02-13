@@ -1,0 +1,141 @@
+install
+url --url=http://ftp.astral.ro/distros/centos/6/os/x86_64/ --proxy=http://172.16.145.1:3128
+lang en_US.UTF-8
+keyboard uk
+network --device eth0 --bootproto dhcp
+rootpw root
+firewall --service=ssh
+authconfig --enableshadow --passalgo=sha512 --enablefingerprint
+selinux --enforcing
+timezone --utc Europe/London
+bootloader --location=mbr --driveorder=sda
+
+repo --name="CentOS" --baseurl=http://ftp.astral.ro/distros/centos/6/os/x86_64 --cost=100 --proxy=http://172.16.145.1:3128
+
+repo --name="EPEL" --baseurl=http://ftp.astral.ro/mirrors/fedora/pub/epel/6/x86_64 --cost=100 --proxy=http://172.16.145.1:3128
+
+zerombr yes
+clearpart --all --initlabel
+part / --fstype ext4 --size=1892 --label=cloud-image-rootfs
+
+%packages
+
+@Base
+@Core
+
+dracut-modules-growroot
+
+python-pip
+python-cheetah
+python-prettytable
+python-oauth
+python-configobj
+python-argparse
+python-requests
+python-boto
+PyYAML
+
+wget
+
+%end
+
+# %post 
+%post --log=/root/post.log
+
+sed -i "s/^ACTIVE_CONSOLES=\/dev\/tty\[1-6\]/ACTIVE_CONSOLES=\/dev\/tty1/" /etc/sysconfig/init
+sed -i "/HWADDR/d" /etc/sysconfig/network-scripts/ifcfg-eth*
+
+rm -f /etc/udev/rules.d/70-persistent-net.rules
+echo "#" > /etc/udev/rules.d/75-persistent-net-generator.rules
+
+echo NOZEROCONF=yes >> /etc/sysconfig/network
+
+sed -i 's/rhgb quiet/quiet console=ttyS0,115200n8/g' /boot/grub/grub.conf
+sed -i 's/^hiddenmenu$/hiddenmenu\nserial\ --unit=0\ --speed=115200\ --word=8\ --parity=no\ --stop=1\nterminal\ --timeout=5\ console\ serial/g' /boot/grub/grub.conf 
+/sbin/dracut --force --add growroot /boot/initramfs-`uname -r`.img
+
+/usr/bin/wget -O /tmp/cloud-init-0.7.4.tar.gz https://launchpad.net/cloud-init/trunk/0.7.4/+download/cloud-init-0.7.4.tar.gz
+/bin/tar xf /tmp/cloud-init-0.7.4.tar.gz -C /tmp/
+
+
+cp /tmp/cloud-init-0.7.4/sysvinit/redhat/cloud-* /etc/init.d/
+
+mkdir -p /etc/cloud
+
+cd /tmp/cloud-init-0.7.4 ; /usr/bin/python setup.py install
+
+/sbin/chkconfig --add cloud-config
+/sbin/chkconfig --add cloud-final
+/sbin/chkconfig --add cloud-init
+/sbin/chkconfig --add cloud-init-local
+
+/sbin/chkconfig kdump off
+
+rm -rf /tmp/cloud-init-0.7.4*
+
+cat > /etc/cloud/cloud.cfg <<EOF
+users:
+ - default
+
+disable_root: 1
+ssh_pwauth:   0
+
+locale_configfile: /etc/sysconfig/i18n
+mount_default_fields: [~, ~, 'auto', 'defaults,nofail', '0', '2']
+resize_rootfs_tmp: /dev
+ssh_deletekeys:   0
+ssh_genkeytypes:  ~
+syslog_fix_perms: ~
+
+cloud_init_modules:
+ - bootcmd
+ - write-files
+ - resizefs
+ - set_hostname
+ - update_hostname
+ - update_etc_hosts
+ - rsyslog
+ - users-groups
+ - ssh
+
+cloud_config_modules:
+ - mounts
+ - locale
+ - set-passwords
+ - timezone
+ - puppet
+ - chef
+ - salt-minion
+ - mcollective
+ - disable-ec2-metadata
+ - runcmd
+
+cloud_final_modules:
+ - rightscale_userdata
+ - scripts-per-once
+ - scripts-per-boot
+ - scripts-per-instance
+ - scripts-user
+ - ssh-authkey-fingerprints
+ - keys-to-console
+ - phone-home
+ - final-message
+
+system_info:
+  distro: rhel
+  default_user:
+    name: cloud-user
+    shell: /bin/bash
+    home: /home/cloud-user
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+  paths:
+    cloud_dir: /var/lib/cloud
+    templates_dir: /etc/cloud/templates
+  ssh_svcname: sshd
+
+# vim:syntax=yaml
+EOF
+%end
+
+poweroff
